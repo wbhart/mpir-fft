@@ -206,7 +206,12 @@ In order to get around this we must perform two multiplications, one via a negac
 
 5. Sqrt 2 trick (not implemented yet)
 
-In the ring Z/pZ is a nice square root of 2. This allows us to perform a convolution of twice the length without twice the cost. To perform the operations we need to be able to perform twiddles by powers of sqrt2. These are decomposed and the operations are combined as much as possible with the multiplications by powers of 2.
+In the ring Z/pZ where p = 2^S + 1 the value 2^(2S/4)-2^(S/4) is a 
+square root of 2. This allows us to perform a convolution of twice 
+the length without twice the cost. To perform the operations we need 
+to be able to perform twiddles by powers of sqrt2. These are decomposed 
+and the operations are combined as much as possible with the 
+multiplications by powers of 2.
 
 References
 ==========
