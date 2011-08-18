@@ -131,12 +131,12 @@ i*w does.
 23) In FFT_radix2_butterfly, I don't think i >= n is actually
 possible, so remove that.
 
-FFT_radix2_new:
+FFT_radix2:
 FFT_radix2_twiddle:
-IFFT_radix2_new:
+IFFT_radix2:
 IFFT_radix2_twiddle:
 
-26) radix2 is superfluous in the name, as is the new.
+26) radix2 is superfluous in the name.
 
 27) combine the non-twiddle functions with the twiddle versions.
 
@@ -270,11 +270,7 @@ new karasub function , we get a extra carry on the split , but it only
 propagates 1 word on average , more cache friendly. sumdiff is not as effective
 as it could be (due the the x86 arch) , so separate evaluation maybe better?
 
-FFT_split_radix
-
-use mpn_sumdiff
-
-IFFT_radix2_truncate IFFT_radix2_new IFFT_radix2_truncate_twiddle
+IFFT_radix2_truncate IFFT_radix2 IFFT_radix2_truncate_twiddle
 IFFT_radix2_truncate1_twiddle
 
 use mpn_double

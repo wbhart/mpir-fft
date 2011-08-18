@@ -21,13 +21,9 @@ The functions included in the source code include:
 
 * FFT butterflies
 
-* Recursive split radix FFT (this does not appear to be faster than the Radix 2 FFT)
-
 * Ordinary Recursive Cooley-Tukey Radix 2 FFT
 
-* A second version of the radix 2 FFT
-
-* Versions of the radix 2 FFT which incorporate negacyclic twiddles and truncation
+* Versions of the radix 2 FFT which incorporate twiddles (for MFA and negacyclic FFT) and truncation
 
 * IFFT's matching all the FFT's
 
@@ -37,7 +33,7 @@ The functions included in the source code include:
 
 * IFFT versions of the MFA's
 
-* Two alternative routines for multiplication mod 2^wn + 1
+* A routine for multiplication mod 2^wn + 1 (the nagacyclic trick is currently not in use, but a simple version of it is implemented)
 
 * The main integer multiplication routine new_mpn_mul
 
