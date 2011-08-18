@@ -95,11 +95,6 @@ do the swap internal to the function.
 
 17) Can this function be optimised in assembly?
 
-FFT_split_radix_butterfly:
-FFT_split_radix_butterfly2:
-
-18) Remove as no longer utilised.
-
 FFT_radix2_twiddle_butterfly:
 FFT_radix2_twiddle_inverse_butterfly:
 
@@ -135,10 +130,6 @@ i*w does.
 
 23) In FFT_radix2_butterfly, I don't think i >= n is actually
 possible, so remove that.
-
-FFT_split_radix:
-
-24) Remove, as it is not utilised.
 
 FFT_radix2:
 
