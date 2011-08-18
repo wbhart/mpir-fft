@@ -1,0 +1,2 @@
+export LD_LIBRARY_PATH=/home/wbhart/mpir-2.4.0/.libs:$LD_LIBRARY_PATH
+

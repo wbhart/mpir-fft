@@ -1,0 +1,277 @@
+1) Implement the sqrt2 trick. In the ring Z/pZ where p = 2^B + 1 the
+value 2^(2B/4)-2^(B/4) is a square root of 2. This means you can have
+convolutions of length 4m instead of 2m by using these extra roots of
+unity. It should be the case that these are only needed in the very
+top layer of the FFT and IFFT. However one should still implement
+these efficiently. Obviously one decomposes a multiplication by
+(sqrt(2))^{2i+1} into 2^i*sqrt(2) (and clearly sqrt(2)^{2i} just
+becomes 2^i which we can already do).
+
+The left hand half of the FFT butterfly is unaffected, but the right
+hand half will need multiplication by sqrt2. One can multiply by
+2^{2B/4} first, combining this with the existing butterfly shifts. Then
+one submuls by a further 2^(B/4) for the other "leg" of the sqrt2.
+Whilst this is less efficient than a standard butterfly it allows one
+to double the convolution length, work with smaller coefficients in
+the pointwise mults and the cost is only small, at the very top layer.
+
+For the IFFT one must do a similar thing, decomposing the
+multiplication by sqrt2. There it is slightly more complex. The best
+we can probably do is to apply the usual bitshifts first, then apply a
+sqrt2 combined with any limb shifts, then do a sumdiff. That's three
+operations, but without additional assembly functions I don't see how
+to do better. At least any negations can be more easily combined with
+the sumdiff.
+
+2) An efficient negacyclic convolution. One performs a naive convolution
+with *coefficients* modulo a power of the limb size, i.e. mod B^i for some 
+small i and combines it with the information you get from an FFT negacyclic
+convolution with *coefficients* modulo some 2^b+1. It's still a
+negacyclic convolution, so that still gives you the product mod 2^B+1
+that you are after. 
+
+One may also force the pointwise multiplication *of the FFT negacyclic 
+convolution* to be a multiple of 3 limbs, so that the identity 2^3B+1 =
+(2^B+1)(2^2B-2^B+1) can be used.
+
+mpn_addmod_2expp1_1:
+
+3) This can be done faster in the case where c is small (the generic case), 
+whether positive or negative. In fact it is probably only ever used in such 
+cases.
+
+4) The function should probably be renamed. The name doesn't make a
+whole lot of sense.
+
+revbin:
+
+5) This is very inefficient.
+
+6) The name should be changed to something more exotic to avoid
+polluting namespace when linking with other libraries.
+
+FFT_split* :
+
+7) We need a function which given the parameters currently sent to
+FFT_split_bits and a coefficient number, just returns that single
+coefficient. The reason for this is that splitting the integer up into
+chunks (to the bit) can then be merged with the top layer of the FFT,
+which has consequences for cache locality. In particular if you were
+doing an MFA transform, you'd pull out only the coefficients needed
+for each column FFT at a time, then immediately do that FFT.
+
+8) Experiment with cache hints. On Opterons in particular this may give a
+speedup. The current code indicates where cache hints should be used, though 
+combine this strategy with 7.
+
+9) Replace any ulong's which should really be mp_limb_t's so that
+things will work on Windows.
+
+FFT_combine*:
+
+10) Again it might be possible to combine just a single coefficient at
+a time so that cache locality can be maintained for the MFA IFFT's.
+One has to be slightly careful to avoid a quadratic run time, but for
+unsigned coefficients I think it will be OK. One also needs to
+selectively zero the limbs of the output integer in step with these
+coefficient combines I would guess. So that step should probably be
+combined with this somehow. Needs careful thought.
+
+11) Pass in temporary space from the main integer multiplication routine.
+
+mpn_submod_i_2expp1:
+
+12) Remove as it is only used in the split radix code, which is not utilised.
+
+mpn_lshB_sumdiffmod_2expp1:
+mpn_sumdiff_rshBmod_2expp1:
+
+13) The name's are stupid and should be changed. Too specific to be
+mpn functions.
+
+14) Is there some symmetry which can be utilised to make the functions
+simpler. There seem to be a lot of cases.  I don't think there is, as
+one is doing a subtraction, however combining with a possible negation
+without increasing the code complexity might be possible. Certainly
+the case x = 0 is the (I)FFT butterfly case so surely some
+consolidation is possible there.
+
+15) Can the entire functions be done in assembly? Either way, the
+overheads need to be reduced as much as possible, and we still need a
+generic C implementation.
+
+mpn_mul_2expmod_2expp1:
+mpn_div_2expmod_2expp1:
+
+16) The first function should probably just deal with all cases,
+whether bit shifts, or including limb shifts, positive or negative. I
+ended up implementing FFT and negacyclic_twiddle functions because
+this didn't support limb shifts, and these were needed in the
+truncated FFT. So some rationalisation is possible there. Do away with
+the mpn_div_2expmod_2expp1 function. Do right shift by d bits by doing
+left shift by 2*n*w - d bits and make this function handle the
+negation. But see how the FFT_twiddle and FFT_negacyclic_twiddle
+functions are implemented which return an int to indicate if they did
+their operation in-place or not to save copying data around when it is
+not necessary. Perhaps just pass the temporary in as a parameter and
+do the swap internal to the function.
+
+17) Can this function be optimised in assembly?
+
+FFT_split_radix_butterfly:
+FFT_split_radix_butterfly2:
+
+18) Remove as no longer utilised.
+
+FFT_radix2_twiddle_butterfly:
+FFT_radix2_twiddle_inverse_butterfly:
+
+19) Surely this can be combined with the ordinary
+(IF)FFT_radix2_butterfly functions. However note that it is better to
+pass nw than to pass n and w separately as we do elsewhere. Perhaps
+rename this parameter to nw or limbs, not NW.
+
+20) The radix2 in the name is redundant, as we only implement radix 2,
+and other radices are impractical. Omit the twiddle from the name.
+
+21) The motif:
+
+  b1 %= (2*NW);
+  if (b1 >= NW)
+  {
+     negate2 = 1;
+     b1 -= NW;
+  }
+  x = b1/GMP_LIMB_BITS;
+  b1 -= x*GMP_LIMB_BITS;
+
+occurs often in this and other functions, and should be adapted away
+into a macro or something like that. It's not necessarily optimised
+either.
+
+FFT_radix2_butterfly:
+FFT_radix2_inverse_butterfly:
+
+22) Surely better to pass nw and an actual bit shift rather than i,
+since otherwise n*w needs to be computed over and over, or at least
+i*w does.
+
+23) In FFT_radix2_butterfly, I don't think i >= n is actually
+possible, so remove that.
+
+FFT_split_radix:
+
+24) Remove, as it is not utilised.
+
+FFT_radix2:
+
+25) Remove as it is no longer used.
+
+FFT_radix2_new:
+FFT_radix2_twiddle:
+IFFT_radix2_new:
+IFFT_radix2_twiddle:
+
+26) radix2 is superfluous in the name, as is the new.
+
+27) combine the non-twiddle functions with the twiddle versions.
+
+28) I don't believe the result stride rs is ever used, and we always
+do the FFT and IFFT in-place, so remove rr and rs entirely.
+
+29) It is no longer necessary to pass temp. It isn't used.
+
+30) Can t1 and t2 be combined without a loss of speed? Please
+benchmark and be *absolutely sure*.
+
+31) The motif:
+
+     ptr = rr[0];
+     rr[0] = *t1;
+     *t1 = ptr;
+
+occurs frequently here and elsewhere and should definitely be adapted
+away into a pointer swap macro, or use one of the already provided
+MPIR macros for this.
+
+FFT_negacyclic_twiddle:
+FFT_twiddle:
+
+32) Remove, see 16. However note that an indication of how to combine
+the negation is provided in commented out code (which is not tested).
+
+FFT_radix2_truncate1:
+FFT_radix2_truncate:
+FFT_radix2_truncate1_twiddle:
+FFT_radix2_truncate_twiddle:
+IFFT_radix2_truncate1:
+IFFT_radix2_truncate1_twiddle:
+IFFT_radix2_truncate:
+IFFT_radix2_truncate1_twiddle:
+
+33) Combine non-twiddle and twiddle versions. Remove radix2 from name.
+
+34) Remove rr and rs. Do in-place.
+
+35) Correct code comments which are cut and pasted from elsewhere.
+
+36) Write special cases for n = 1, 2 to remove the unnecessary
+restriction that trunc be divisible by 2. Remember to remove the
+restriction in the multiplication code which sets trunc to a multiple
+of 2*sqrt instead of just a multiple of sqrt.
+
+FFT_radix2_negacyclic:
+IFFT_radix2_negacyclic:
+
+37) Remove rr and rs. Always work in-place.
+
+38) Do not pass temp.
+
+FFT_radix2_mfa:
+FFT_radix2_mfa_truncate:
+IFFT_radix2_mfa:
+IFFT_radix2_mfa_truncate:
+
+39) Do not pass temp.
+
+40) Combine truncate and non-truncate versions. Actually the
+non-truncate versions are not really needed.
+
+FFT_mulmod_2expp1:
+
+41) Memory allocation should be done in a single block, or even passed
+in as a temporary.
+
+42) Clean up the code which handles the subtractions and make it cache
+friendly.
+
+new_mpn_mulmod_2expp1:
+
+43) Doesn't currently deal with the case that c != 0 when using the
+negacyclic convolution (which it currently never uses anyway because
+it is too inefficient), i.e. the case where one of the inputs is
+2^{n*w} so that it doesn't fit into {n*w}/GMP_LIMB_BITS limbs.
+
+44) Doesn't currently return any carry, i.e. when the result is p-1
+there is a carry.
+
+new_mpn_mul_mfa:
+
+45) In the memory allocation part, one shouldn't mix allocations of
+arrays of mp_limb_t's and mp_limb_t *'s as this is not necessarily
+safe on all machines. Or is it?
+
+General:
+
+46) The code needs to be made Windows safe by avoiding variable
+declarations except at the beginnings of blocks.
+
+47) Some functions don't have adequate test functions.
+
+48) I think the normalise function is correct, but the test code
+doesn't check all cases.
+
+49) The test code doesn't test the FFTs, IFFTs and multiplication
+functions for lots of different sizes, especially different values of
+n, w, and trunc.
+
