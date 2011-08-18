@@ -33,26 +33,9 @@ or implied, of William Hart.
 #include "mpir.h"
 #include "gmp-impl.h"
 #include "longlong.h"
+#include "mul_fft.h"
 
 #define ulong unsigned long
-
-void mpn_to_mpz(mpz_t m, mp_limb_t * i, ulong limbs);
-void set_p(mpz_t p, ulong n, ulong w);
-void rand_n(mp_limb_t * n, gmp_randstate_t state, ulong limbs);
-void ref_mul_2expmod(mpz_t m, mpz_t i2, mpz_t p, ulong n, ulong w, ulong d);
-void ref_norm(mpz_t m, mpz_t p);
-void ref_sumdiff_rshBmod(mpz_t t, mpz_t u, mpz_t i1, 
-                      mpz_t i2, mpz_t p, ulong n, ulong w, ulong x, ulong y);
-
-/*
-   FIXME: This can be done faster for the case where c is small.
-   The function adds c to the integer r modulo 2^l + 1.
-*/
-void mpn_addmod_2expp1_1(mp_limb_t * r, ulong l, mp_limb_signed_t c)
-{
-   if (c >= 0) mpn_add_1(r, r, l + 1, c);
-   else mpn_sub_1(r, r, l + 1, -c);
-}
 
 /*
    FIXME: this is the most inefficient implementation I could come up with. ;-)
