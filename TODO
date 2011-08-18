@@ -99,7 +99,7 @@ FFT_radix2_twiddle_butterfly:
 FFT_radix2_twiddle_inverse_butterfly:
 
 19) Surely this can be combined with the ordinary
-(IF)FFT_radix2_butterfly functions. However note that it is better to
+(I)FFT_radix2_butterfly functions. However note that it is better to
 pass nw than to pass n and w separately as we do elsewhere. Perhaps
 rename this parameter to nw or limbs, not NW.
 
@@ -161,8 +161,9 @@ MPIR macros for this.
 FFT_negacyclic_twiddle:
 FFT_twiddle:
 
-32) Remove, see 16. However note that an indication of how to combine
-the negation is provided in commented out code (which is not tested).
+32) We can possibly do without these by combining with non-twiddle versions, 
+see 16. However note that an indication of how to combine the negation 
+is provided in commented out code (which is not tested and thus very broken).
 
 FFT_radix2_truncate1:
 FFT_radix2_truncate:
@@ -223,7 +224,7 @@ new_mpn_mul_mfa:
 
 45) In the memory allocation part, one shouldn't mix allocations of
 arrays of mp_limb_t's and mp_limb_t *'s as this is not necessarily
-safe on all machines. Or is it?
+safe on all machines.
 
 General:
 
