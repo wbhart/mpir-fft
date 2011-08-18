@@ -28,6 +28,9 @@ or implied, of William Hart.
 
 */
 
+#define TEST 1
+#define TIME 0
+
 #include <stdio.h>
 #include <stdlib.h>
 #include "mpir.h"
@@ -45,16 +48,33 @@ or implied, of William Hart.
    * l = {wn}/GMP_LIMB_BITS (number of limbs)
 */
 
+const mp_limb_t revtab0[1] = { 0 };
+const mp_limb_t revtab1[2] = { 0, 1 };
+const mp_limb_t revtab2[4] = { 0, 2, 1, 3 };
+const mp_limb_t revtab3[8] = { 0, 4, 2, 6, 1, 5, 3, 7 };
+const mp_limb_t revtab4[16] = { 0, 8, 4, 12, 2, 10, 6, 14, 1, 9, 5, 13, 3, 11, 7, 15 };
+
+const mp_limb_t * revtab[5] = { revtab0, revtab1, revtab2, revtab3, revtab4 };
+
 /*
-   FIXME: this is the most inefficient implementation I could come up with. ;-)
-*/
-ulong revbin(ulong c, ulong depth)
+   computes the reverse binary of a binary number of the given number of bits
+ */
+mp_limb_t mpir_revbin(mp_limb_t in, mp_bitcnt_t bits)
 {
-   ulong i = 0;
-   ulong ret = 0;
-   for (i = 0; i < depth + 1; i++)
-      if (c & (1UL<<i)) ret += (1UL<<(depth - i));
-   return ret;
+    long i;
+    mp_limb_t out = 0;
+    
+    if (bits <= 4)
+        return revtab[bits][in];
+
+    for (i = 0; i < bits; i++)
+    {   
+       out <<= 1;
+       out += (in & 1);
+       in >>= 1;
+    }
+
+    return out;
 }
 
 /* 
@@ -1753,7 +1773,7 @@ void FFT_radix2_mfa(mp_limb_t ** ii, ulong n, ulong w,
       FFT_radix2_twiddle(ii + i, n1, n2/2, w*n1, t1, t2, temp, w, 0, i, 1);
       for (j = 0; j < n2; j++)
       {
-         ulong s = revbin(j, depth);
+         ulong s = mpir_revbin(j, depth);
          if (j < s)
          {
             ptr = ii[i + j*n1];
@@ -1769,7 +1789,7 @@ void FFT_radix2_mfa(mp_limb_t ** ii, ulong n, ulong w,
       
       for (j = 0; j < n1; j++)
       {
-         ulong s = revbin(j, depth2);
+         ulong s = mpir_revbin(j, depth2);
          if (j < s)
          {
             ptr = ii[i*n1 + j];
@@ -1805,7 +1825,7 @@ void FFT_radix2_mfa_truncate(mp_limb_t ** ii, ulong n, ulong w,
       FFT_radix2_truncate_twiddle(ii + i, n1, n2/2, w*n1, t1, t2, temp, w, 0, i, 1, trunc);
       for (j = 0; j < n2; j++)
       {
-         s = revbin(j, depth);
+         s = mpir_revbin(j, depth);
          if (j < s)
          {
             ptr = ii[i + j*n1];
@@ -1817,12 +1837,12 @@ void FFT_radix2_mfa_truncate(mp_limb_t ** ii, ulong n, ulong w,
    
    for (s = 0; s < trunc; s++)
    {
-      i = revbin(s, depth);
+      i = mpir_revbin(s, depth);
       FFT_radix2_new(ii + i*n1, 1, ii + i*n1, n1/2, w*n2, t1, t2, temp);
       
       for (j = 0; j < n1; j++)
       {
-         ulong t = revbin(j, depth2);
+         ulong t = mpir_revbin(j, depth2);
          if (j < t)
          {
             ptr = ii[i*n1 + j];
@@ -1852,7 +1872,7 @@ void IFFT_radix2_mfa(mp_limb_t ** ii, ulong n, ulong w,
    {
       for (j = 0; j < n1; j++)
       {
-         ulong s = revbin(j, depth2);
+         ulong s = mpir_revbin(j, depth2);
          if (j < s)
          {
             ptr = ii[i*n1 + j];
@@ -1868,7 +1888,7 @@ void IFFT_radix2_mfa(mp_limb_t ** ii, ulong n, ulong w,
    {   
       for (j = 0; j < n2; j++)
       {
-         ulong s = revbin(j, depth);
+         ulong s = mpir_revbin(j, depth);
          if (j < s)
          {
             ptr = ii[i + j*n1];
@@ -1903,10 +1923,10 @@ void IFFT_radix2_mfa_truncate(mp_limb_t ** ii, ulong n, ulong w,
 
    for (s = 0; s < trunc; s++)
    {
-      i = revbin(s, depth);
+      i = mpir_revbin(s, depth);
       for (j = 0; j < n1; j++)
       {
-         ulong t = revbin(j, depth2);
+         ulong t = mpir_revbin(j, depth2);
          if (j < t)
          {
             ptr = ii[i*n1 + j];
@@ -1922,7 +1942,7 @@ void IFFT_radix2_mfa_truncate(mp_limb_t ** ii, ulong n, ulong w,
    {   
       for (j = 0; j < n2; j++)
       {
-         s = revbin(j, depth);
+         s = mpir_revbin(j, depth);
          if (j < s)
          {
             ptr = ii[i + j*n1];
@@ -2177,7 +2197,7 @@ void new_mpn_mul(mp_limb_t * r1, mp_limb_t * i1, ulong n1, mp_limb_t * i2, ulong
     
    for (s = 0; s < trunc/sqrt; s++)
    {
-      u = revbin(s, (depth + 1)/2)*sqrt;
+      u = mpir_revbin(s, (depth + 1)/2)*sqrt;
       for (t = 0; t < sqrt; t++)
       {
          j = u + t; 
@@ -3063,7 +3083,7 @@ void test_fft_ifft()
          mpn_normmod_2expp1(ii[j], limbs);
       for (j = 0; j < 2*n; j++)
       {
-         s = revbin(j, depth);
+         s = mpir_revbin(j, depth);
          MPN_COPY(kk[j], ii[j], limbs + 1);
       }
       IFFT_radix2_new(kk, 1, kk, n, w, &v1, &v2, s3);
@@ -3672,6 +3692,7 @@ void time_mul()
 
 int main(void)
 {
+#if TEST
    test_norm(); printf("mpn_normmod_2expp1...PASS\n");
    test_submod_i(); printf("mpn_submod_i_2expp1...PASS\n");
    test_mul_2expmod(); printf("mpn_mul_2expmod_2expp1...PASS\n");
@@ -3686,15 +3707,19 @@ int main(void)
    test_fft_ifft_mfa(); printf("FFT_IFFT_MFA...PASS\n");
    test_fft_truncate(); printf("FFT_TRUNCATE...PASS\n");
    test_fft_ifft_truncate(); printf("FFT_IFFT_TRUNCATE...PASS\n");
-   
+
+   //test_mulmod();
+   //test_mul();
+#endif
+
+#if TIME
    //time_ifft();
    //time_mfa();
    //time_imfa();
-   //test_mulmod();
-   //test_mul();
    //time_mul_with_negacyclic(); // negacyclic is currently *disabled*
    //time_negacyclic_fft();
    time_mul();
-   
+#endif
+
    return 0;
 }
