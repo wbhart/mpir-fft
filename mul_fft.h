@@ -42,7 +42,7 @@ or implied, of William Hart.
    is that c is very small and allow the compiler to inline that.
 */
 static inline
-void mpn_addmod_2expp1_1(mp_limb_t * r, ulong l, mp_limb_signed_t c)
+void mpn_addmod_2expp1_1(mp_limb_t * r, mp_size_t l, mp_limb_signed_t c)
 {
    mp_limb_t sum = r[0] + c;
 

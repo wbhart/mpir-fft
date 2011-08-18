@@ -55,7 +55,7 @@ Let's suppose we wish to compute a convolution of length 2n where n is a power o
 
 We assume wn is divisible by GMP_LIMB_BITS (either 32 or 64). In practice n is always divisible by this constant.
 
-Write L = wn/GMP_LIMB_BITS. Each coeff is stored in a block of L+1 limbs in twos complement form. We accumulate carries in the top limb meaning reduction mod p does not need to be done after an addition or subtraction.
+Write l = wn/GMP_LIMB_BITS. Each coeff is stored in a block of l+1 limbs in twos complement form. We accumulate carries in the top limb meaning reduction mod p does not need to be done after an addition or subtraction.
 
 Coefficients are also accessed via one level of indirection so that coefficients can be swapped by swapping pointers.
 

@@ -38,6 +38,14 @@ or implied, of William Hart.
 #define ulong unsigned long
 
 /*
+   NOTES: throughout the following we use the following notation:
+   
+   * convolution length 2*n where n is a power of 2
+   * p = 2^{wn} + 1 with wn divisible by GMP_LIMB_BITS
+   * l = {wn}/GMP_LIMB_BITS (number of limbs)
+*/
+
+/*
    FIXME: this is the most inefficient implementation I could come up with. ;-)
 */
 ulong revbin(ulong c, ulong depth)
