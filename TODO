@@ -131,10 +131,6 @@ i*w does.
 23) In FFT_radix2_butterfly, I don't think i >= n is actually
 possible, so remove that.
 
-FFT_radix2:
-
-25) Remove as it is no longer used.
-
 FFT_radix2_new:
 FFT_radix2_twiddle:
 IFFT_radix2_new:
