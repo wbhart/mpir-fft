@@ -47,7 +47,7 @@ The functions included in the source code include:
 
 * A simple driver which just calls the test/timing functions.
 
-Please see todo.txt for what remains to be done.
+Please see the file TODO for what remains to be done.
 
 We now describe the strategy used. First note that as the split radix code is not faster we use standard radix 2 transforms throughout.
 
