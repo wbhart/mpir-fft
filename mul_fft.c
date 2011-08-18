@@ -1,4 +1,4 @@
-/* mul_fft -- split-radix fft routines for MPIR.
+/* mul_fft -- radix 2 fft routines for MPIR.
 
 Copyright 2009, 2011 William Hart. All rights reserved.
 
@@ -291,22 +291,6 @@ void mpn_normmod_2expp1(mp_limb_t * t, mp_size_t l)
 }
 
 /*
-   We are given two integers modulo 2^wn+1, i1 and i2, which are not 
-   necessarily normalised. We compute t = sqrt(-1)*(i1 - i2) and are given 
-   n and w. Note 2^wn/2 = sqrt(-1) mod 2^wn+1. Requires wn to be divisible
-   by 2*GMP_LIMB_BITS.
-*/
-void mpn_submod_i_2expp1(mp_limb_t * t, mp_limb_t * i1, mp_limb_t * i2, mp_size_t l)
-{
-   mp_limb_t cy;
-   mp_limb_t l2 = l/2;
-    
-   t[l] = -mpn_sub_n(t + l2, i1, i2, l2);
-   cy = i2[l] - i1[l] - mpn_sub_n(t, i2 + l2, i1 + l2, l2);
-   mpn_addmod_2expp1_1(t + l2, l2, cy);
-}
-
-/*
    We are given two integers modulo 2^wn+1, i1 and i2, which are 
    not necessarily normalised and are given n and w. We compute 
    t = (i1 + i2)*B^x, u = (i1 - i2)*B^y. Aliasing between inputs and 
@@ -524,79 +508,6 @@ void mpn_div_2expmod_2expp1(mp_limb_t * t, mp_limb_t * i1, mp_size_t limbs, mp_b
    }
 }
 
-/* 
-   Set  {s, t} to { z1^i*(s+t), z2^i*(s-t) } where 
-   z1 = exp(2*Pi*I/(2*n)), z2 = exp(2*Pi*I*3/(2*n)), z1=>w bits
-*/
-void FFT_split_radix_butterfly(mp_limb_t * s, mp_limb_t * t, mp_size_t i, mp_size_t n, mp_bitcnt_t w, mp_limb_t * u)
-{
-   mp_limb_t size = (w*n)/GMP_LIMB_BITS + 1;
-   mp_limb_t * v;
-   mp_size_t x, y, b1, b2;
-   int negate = 0;
-   int negate2 = 0;
-   
-   v = u + size;
-
-   b1 = i;
-   while (b1 >= n) 
-   {
-      negate2 = 1 - negate2;
-      b1 -= n;
-   }
-   b1 = b1*w;
-   x = b1/GMP_LIMB_BITS;
-   b1 -= x*GMP_LIMB_BITS;
-   b2 = 3*i;
-   while (b2 >= n) 
-   {
-      negate = 1 - negate;
-      b2 -= n;
-   }
-   b2 = b2*w;
-   y = b2/GMP_LIMB_BITS;
-   b2 -= y*GMP_LIMB_BITS;
- 
-   mpn_lshB_sumdiffmod_2expp1(u, v, s, t, size - 1, x, y);
-   mpn_mul_2expmod_2expp1(s, u, size - 1, b1);
-   mpn_mul_2expmod_2expp1(t, v, size - 1, b2);
-   if (negate) mpn_neg_n(t, t, size);
-   if (negate2) mpn_neg_n(s, s, size);
-}
-
-void FFT_split_radix_butterfly2(mp_limb_t * u, mp_limb_t * v, mp_limb_t * s, mp_limb_t * t, mp_size_t i, mp_size_t n, mp_bitcnt_t w)
-{
-   mp_limb_t size = (w*n)/GMP_LIMB_BITS + 1;
-   mp_size_t x, y, b1, b2;
-   int negate = 0;
-   int negate2 = 0;
-   
-   b1 = i;
-   while (b1 >= n) 
-   {
-      negate2 = 1 - negate2;
-      b1 -= n;
-   }
-   b1 = b1*w;
-   x = b1/GMP_LIMB_BITS;
-   b1 -= x*GMP_LIMB_BITS;
-   b2 = 3*i;
-   while (b2 >= n) 
-   {
-      negate = 1 - negate;
-      b2 -= n;
-   }
-   b2 = b2*w;
-   y = b2/GMP_LIMB_BITS;
-   b2 -= y*GMP_LIMB_BITS;
- 
-   mpn_lshB_sumdiffmod_2expp1(u, v, s, t, size - 1, x, y);
-   mpn_mul_2expmod_2expp1(u, u, size - 1, b1);
-   if (negate2) mpn_neg_n(u, u, size);
-   mpn_mul_2expmod_2expp1(v, v, size - 1, b2);
-   if (negate) mpn_neg_n(v, v, size);
-}
-
 /*
    Set u = 2^{ws*tw1}*(s + t), v = 2^{w+ws*tw2}*(s - t)
 */
@@ -710,97 +621,6 @@ void FFT_radix2_twiddle_inverse_butterfly(mp_limb_t * s, mp_limb_t * t,
    if (negate2) mpn_neg_n(i2, i2, limbs + 1);
    mpn_div_2expmod_2expp1(i2, i2, limbs, b2);
    mpn_sumdiff_rshBmod_2expp1(s, t, i1, i2, limbs, x, y);
-}
-
-/* 
-   The split radix DIF FFT works as follows:
-   Given: inputs [i0, i1, ..., i{m-1}], for m a power of 2
-
-   Output: Fsplit[i0, i1, ..., i{m-1}] = [r0, r1, ..., r{m-1}]
-   (Inputs and outputs may be subject to a stride and not in consecutive locations.)
-
-   Algorithm: * Recursively compute [r0, r2, r4, ...., r{m-2}] 
-                           = Fsplit[i0+i{m/2}, i1+i{m/2+1}, ..., i{m/2-1}+i{m-1}]
-              * Let [s0, s1, ..., s{m/4-1}] 
-                    = [i0-i{m/2}, i1-i{m/2+1}, ..., i{m/4-1}-i{3m/4-1}]
-              * Let [t0, t1, ..., t{m/4-1}] 
-                    = sqrt(-1)[i{m/4}-i{3m/4}, i{m/4+1}-i{3m/4+1}, ..., i{m/2-1}-i{m-1}]
-              * Let [u0, u1, ..., u{m/4-1}] 
-                    = [z1^0*(s0+t0), z1^1(s1+t1), ..., z1^{m/4-1}*(s{m/4-1}+t{m/4-1})]
-                where z1 = exp(2*Pi*I/m)
-              * Let [v0, v1, ..., v{m/4-1}] 
-                    = [z2^0*(s0-t0), z2^1(s1-t1), ..., z2^{m/4-1}*(s{m/4-1}-t{m/4-1})]
-                where z2 = exp(2*Pi*I*3/m)
-              * Recursively compute [r1, r5, ..., r{m-3}]
-                           = Fsplit[u0, u1, ..., u{m/4-1}]
-              * Recursively compute [r3, r7, ..., r{m-1}]
-                           = Fsplit[v0, v1, ..., v{m/4-1}]
-
-   The parameters are as follows:
-              * 2*n is the length of the input and output arrays (m in the above)
-              * w is such that 2^w is an 2n-th root of unity in the ring Z/pZ that 
-                we are working in, i.e. p = 2^wn + 1 (here n is divisible by 
-                GMP_LIMB_BITS)
-              * ii is the array of inputs (each input is an array of limbs of length 
-                wn/GMP_LIMB_BITS + 1 (the extra limb being a "carry limb")
-              * rr is the array of outputs (each being an array of limbs of length
-                wn/GMP_LIMB_BITS + 1)
-              * rs is the stride with which entries of rr should be written (e.g. 
-                rs = 4 means that the output is to be written in every 4th entry of 
-                rr)
-              * is is the stride with which entries of ii should be read
-*/
-
-void FFT_split_radix(mp_limb_t ** rr, mp_size_t rs, mp_limb_t ** ii, 
-                    mp_size_t n, mp_bitcnt_t w, mp_limb_t ** t1, mp_limb_t ** t2, mp_limb_t ** temp)
-{
-   mp_limb_t * ptr;
-   mp_size_t i;
-   mp_size_t size = (w*n)/GMP_LIMB_BITS + 1;
-   
-   if (n < 4) 
-   {
-      FFT_radix2(rr, rs, ii, n, w, t1, t2, temp);
-      return;
-   }
-
-   // [s0, s1, ..., s{m/4-1}] = [i0-i{m/2}, i1-i{m/2+1}, ..., i{m/4-1}-i{3m/4-1}]
-   for (i = 0; i < n/2; i++) 
-   {
-      mpn_sub_n(temp[i], ii[i], ii[i+n], size);
-      mpn_add_n(ii[i+n], ii[i], ii[i+n], size);
-   }
-   
-   // [t0, t1, ..., t{m/4-1}] = sqrt(-1)[i{m/4}-i{3m/4}, i{m/4+1}-i{3m/4+1}, ..., i{m/2-1}-i{m-1}]
-   for (i = 0; i < n/2; i++)
-   {
-      mpn_submod_i_2expp1(temp[i+n/2], ii[i+n/2], ii[i+3*n/2], size - 1);
-      mpn_add_n(ii[i+3*n/2], ii[i+n/2], ii[i+3*n/2], size);
-   }
-
-   // [u0, u1, ..., u{m/4-1}] = [z1^0*(s0+t0), z1^1(s1+t1), ..., z1^{m/4-1}*(s{m/4-1}+t{m/4-1})]
-   // [v0, v1, ..., v{m/4-1}] = [z2^0*(s0-t0), z2^1(s1-t1), ..., z2^{m/4-1}*(s{m/4-1}-t{m/4-1})]
-   // where z1 = exp(2*Pi*I/m), z2 = exp(2*Pi*I*3/m), z1 => w bits
-   // note {u, v} = {ss, tt}
-   for (i = 0; i < n/2; i++) 
-   {
-      FFT_split_radix_butterfly2(*t1, *t2, temp[i], temp[i+n/2], i, n, w);
-      ptr = temp[i];
-      temp[i] = *t1;
-      *t1 = ptr;
-      ptr = temp[i+n/2];
-      temp[i+n/2] = *t2;
-      *t2 = ptr;
-   }
-
-   // [r0, r2, r4, ...., r{m-2}] = Fsplit[i0+i{m/2}, i1+i{m/2+1}, ..., i{m/2-1}+i{m-1}]
-   FFT_split_radix(rr, 2*rs, ii+n, n/2, 2*w, t1, t2, temp + n);
-
-   // [r1, r5, ..., r{m-3}] = Fsplit[u0, u1, ..., u{m/4-1}]
-   FFT_split_radix(rr + rs, 4*rs, temp, n/4, 4*w, t1, t2, temp + n);
-
-   // [r3, r7, ..., r{m-1}] = Fsplit[v0, v1, ..., v{m/4-1}]
-   FFT_split_radix(rr + 3*rs, 4*rs, temp+n/2, n/4, 4*w, t1, t2, temp + n);
 }
 
 /* 
@@ -2293,20 +2113,6 @@ void ref_sumdiff_rshBmod(mpz_t t, mpz_t u, mpz_t i1,
    mpz_clear(mult2);
 }
 
-void ref_FFT_split_radix_butterfly(mpz_t s, mpz_t t, mpz_t p, mp_size_t i, mp_size_t n, mp_bitcnt_t w)
-{
-   mpz_t temp;
-   mpz_init(temp);
-   mpz_add(temp, s, t);
-   mpz_sub(t, s, t);
-   mpz_set(s, temp);
-   mpz_mul_2exp(s, s, i*w);
-   mpz_mul_2exp(t, t, 3*i*w);
-   mpz_mod(s, s, p);
-   mpz_mod(t, t, p);
-   mpz_clear(temp);
-}
-
 void set_p(mpz_t p, mp_size_t n, mp_bitcnt_t w)
 {
    mpz_set_ui(p, 1);
@@ -2366,64 +2172,6 @@ void test_norm()
    mpz_clear(p);
    mpz_clear(m);
    mpz_clear(m2);
-   gmp_randclear(state);
-}
-
-void test_submod_i()
-{
-   mp_size_t i, j, k, l, n, w, limbs;
-   mpz_t p, m, m2, mn1, mn2;
-   mpz_init(p);
-   mpz_init(m);
-   mpz_init(m2);
-   mpz_init(mn1);
-   mpz_init(mn2);
-   mp_limb_t * nn1, * nn2, * r;
-   gmp_randstate_t state;
-   gmp_randinit_default(state);
-   TMP_DECL;
-
-   for (i = 2*GMP_LIMB_BITS; i < 64*GMP_LIMB_BITS; i += 2*GMP_LIMB_BITS)
-   {
-      for (j = 1; j < 32; j++)
-      {
-         for (k = 1; k <= 2*GMP_NUMB_BITS; k <<= 1)
-         {
-            n = i/k;
-            w = j*k;
-            limbs = (n*w)/GMP_LIMB_BITS;
-            TMP_MARK;
-            nn1 = TMP_BALLOC_LIMBS(limbs + 1);
-            nn2 = TMP_BALLOC_LIMBS(limbs + 1);
-            r = TMP_BALLOC_LIMBS(limbs + 1);
-            rand_n(nn1, state, limbs);
-            rand_n(nn2, state, limbs);
-            
-            mpn_to_mpz(mn1, nn1, limbs);
-            mpn_to_mpz(mn2, nn2, limbs);
-            set_p(p, n, w);
-            
-            mpn_submod_i_2expp1(r, nn1, nn2, limbs);
-            mpn_to_mpz(m2, r, limbs);
-            ref_norm(m2, p);
-            ref_submod_i(m, mn1, mn2, p, n, w);
-
-            if (mpz_cmp(m, m2) != 0)
-            {
-               printf("mpn_submmod_i_2expp1 error\n");
-               gmp_printf("want %Zx\n\n", m);
-               gmp_printf("got  %Zx\n", m2);
-               abort();
-            }
-            TMP_FREE;
-         }
-      }
-   }
-   mpz_clear(p);
-   mpz_clear(m);
-   mpz_clear(m2);
-   mpz_clear(mn1);
-   mpz_clear(mn2);
    gmp_randclear(state);
 }
 
@@ -2790,82 +2538,6 @@ void test_sumdiff_rshBmod()
    gmp_randclear(state);
 }
 
-void test_FFT_split_radix_butterfly()
-{
-   mp_size_t i, j, k, x, n, w, limbs;
-   mpz_t p, ma, mb, m2a, m2b, mn1, mn2;
-   mpz_init(p);
-   mpz_init(ma);
-   mpz_init(mb);
-   mpz_init(m2a);
-   mpz_init(m2b);
-   mpz_init(mn1);
-   mpz_init(mn2);
-   mp_limb_t * nn1, * nn2, * temp;
-   gmp_randstate_t state;
-   gmp_randinit_default(state);
-   TMP_DECL;
-
-   for (i = 2*GMP_LIMB_BITS; i < 20*GMP_LIMB_BITS; i += 2*GMP_LIMB_BITS)
-   {
-      for (j = 1; j < 10; j++)
-      {
-         for (k = 1; k <= 2*GMP_NUMB_BITS; k <<= 1)
-         {
-            n = i/k;
-            w = j*k;
-            limbs = (n*w)/GMP_LIMB_BITS;
-            for (x = 0; x < n + 1; x++)
-            {
-               TMP_MARK;
-               nn1 = TMP_BALLOC_LIMBS(limbs + 1);
-               nn2 = TMP_BALLOC_LIMBS(limbs + 1);
-               temp = TMP_BALLOC_LIMBS(2*(limbs + 1));
-               rand_n(nn1, state, limbs);
-               rand_n(nn2, state, limbs);
-            
-               mpn_to_mpz(mn1, nn1, limbs);
-               mpn_to_mpz(mn2, nn2, limbs);
-               set_p(p, n, w);
-            
-               FFT_split_radix_butterfly(nn1, nn2, x, n, w, temp);
-               mpn_to_mpz(m2a, nn1, limbs);
-               mpn_to_mpz(m2b, nn2, limbs);
-               ref_norm(m2a, p);
-               ref_norm(m2b, p);
-               ref_FFT_split_radix_butterfly(mn1, mn2, p, x, n, w);
-
-               if (mpz_cmp(m2a, mn1) != 0)
-               {
-                  printf("FFT_split_radix_butterfly error a\n");
-                  printf("x = %ld\n", x);
-                  gmp_printf("want %Zx\n\n", mn1);
-                  gmp_printf("got  %Zx\n", m2a);
-                  abort();
-               }
-               if (mpz_cmp(m2b, mn2) != 0)
-               {
-                  printf("FFT_split_radix_butterfly error b\n");
-                  printf("x = %ld\n", x);
-                  gmp_printf("want %Zx\n\n", mn2);
-                  gmp_printf("got  %Zx\n", m2b);
-                  abort();
-               }
-               TMP_FREE;
-            }
-         }
-      }
-   }
-   mpz_clear(p);
-   mpz_clear(ma);
-   mpz_clear(mb);
-   mpz_clear(m2a);
-   mpz_clear(m2b);
-   mpz_clear(mn1);
-   mpz_clear(mn2);
-   gmp_randclear(state);
-}
-
 void test_mul()
 {
    mp_bitcnt_t depth = 13UL;
@@ -3061,7 +2733,6 @@ void test_fft_ifft()
    
    for (i = 0; i < 1; i++)
    {
-      //FFT_split_radix(ii, 1, ii, n, w, &t1, &t2, s1);
       FFT_radix2_new(ii, 1, ii, n, w, &t1, &t2, s1);
       for (j = 0; j < 2*n; j++)
          mpn_normmod_2expp1(ii[j], limbs);
@@ -3678,12 +3349,10 @@ int main(void)
 {
 #if TEST
    test_norm(); printf("mpn_normmod_2expp1...PASS\n");
-   test_submod_i(); printf("mpn_submod_i_2expp1...PASS\n");
    test_mul_2expmod(); printf("mpn_mul_2expmod_2expp1...PASS\n");
    test_div_2expmod(); printf("mpn_div_2expmod_2expp1...PASS\n");
    test_lshB_sumdiffmod(); printf("mpn_lshB_sumdiffmod_2expp1...PASS\n");
    test_sumdiff_rshBmod(); printf("mpn_sumdiff_rshBmod_2expp1...PASS\n");
-   test_FFT_split_radix_butterfly(); printf("FFT_split_radix_butterfly...PASS\n");
    
    test_fft_ifft_mfa_truncate(); printf("FFT_IFFT_MFA_TRUNCATE...PASS\n");
    test_FFT_negacyclic_twiddle(); printf("FFT_negacyclic_twiddle...PASS\n");

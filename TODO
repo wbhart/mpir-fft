@@ -60,10 +60,6 @@ combined with this somehow. Needs careful thought.
 
 11) Pass in temporary space from the main integer multiplication routine.
 
-mpn_submod_i_2expp1:
-
-12) Remove as it is only used in the split radix code, which is not utilised.
-
 mpn_lshB_sumdiffmod_2expp1:
 mpn_sumdiff_rshBmod_2expp1:
 
