@@ -56,18 +56,29 @@ void mpn_addmod_2expp1_1(mp_limb_t * r, mp_size_t l, mp_limb_signed_t c)
    }
 }
 
-void mpn_to_mpz(mpz_t m, mp_limb_t * i, ulong limbs);
+void mpn_to_mpz(mpz_t m, mp_limb_t * i, mp_size_t limbs);
 
-void set_p(mpz_t p, ulong n, ulong w);
+void set_p(mpz_t p, mp_size_t n, mp_bitcnt_t w);
 
-void rand_n(mp_limb_t * n, gmp_randstate_t state, ulong limbs);
+void rand_n(mp_limb_t * n, gmp_randstate_t state, mp_size_t limbs);
 
-void ref_mul_2expmod(mpz_t m, mpz_t i2, mpz_t p, ulong n, ulong w, ulong d);
+void ref_mul_2expmod(mpz_t m, mpz_t i2, mpz_t p, mp_size_t n, mp_bitcnt_t w, mp_bitcnt_t d);
 
 void ref_norm(mpz_t m, mpz_t p);
 
 void ref_sumdiff_rshBmod(mpz_t t, mpz_t u, mpz_t i1,
-                      mpz_t i2, mpz_t p, ulong n, ulong w, ulong x, ulong y);
+                      mpz_t i2, mpz_t p, mp_size_t n, mp_bitcnt_t w, mp_bitcnt_t x, mp_bitcnt_t y);
+
+void FFT_radix2(mp_limb_t ** rr, mp_size_t rs, mp_limb_t ** ii, 
+        mp_size_t n, mp_bitcnt_t w, mp_limb_t ** t1, mp_limb_t ** t2, mp_limb_t ** temp);
+
+void FFT_radix2_twiddle(mp_limb_t ** ii, mp_size_t is,
+      mp_size_t n, mp_bitcnt_t w, mp_limb_t ** t1, mp_limb_t ** t2, mp_limb_t ** temp,
+      mp_size_t ws, mp_size_t r, mp_size_t c, mp_size_t rs);
+
+void IFFT_radix2_twiddle(mp_limb_t ** ii, mp_size_t is,
+      mp_size_t n, mp_bitcnt_t w, mp_limb_t ** t1, mp_limb_t ** t2, mp_limb_t ** temp,
+              mp_size_t ws, mp_size_t r, mp_size_t c, mp_size_t rs);
 
 #endif
 

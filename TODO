@@ -48,9 +48,6 @@ for each column FFT at a time, then immediately do that FFT.
 speedup. The current code indicates where cache hints should be used, though 
 combine this strategy with 7.
 
-9) Replace any ulong's which should really be mp_limb_t's so that
-things will work on Windows.
-
 FFT_combine*:
 
 10) Again it might be possible to combine just a single coefficient at
@@ -258,4 +255,59 @@ doesn't check all cases.
 49) The test code doesn't test the FFTs, IFFTs and multiplication
 functions for lots of different sizes, especially different values of
 n, w, and trunc.
+
+Possible improvements
+=====================
+
+revbin
+
+mpz/fac_ui.c has the standard fast binary reversal algorithm , maybe some asm
+tweeks possible , also perhaps consider keeping two indexes , one standard and
+one reversed and updating both as you go along , this maybe faster depending
+on many things.
+
+FFT_split FFT_split_bits
+
+consider a combined mpn_copy_and_zero , does the copy and zeros the necessary
+upper part , more cache friendly , same for the bit version but with a
+combined shift.
+
+FFT_combine
+
+can use mpn_addadd for a 50% speedup
+
+FFT_combine_bit
+
+can use mpn_addlsh for a 20%-30% speedup or mpn_inclsh for upto 50% speedup
+
+mpn_lshB_sumdiffmod_2expp1 mpn_sumdiff_rshBmod_2expp1
+
+possibly combine the mod part with sumdiff in a half-split-way , just like the
+new karasub function , we get a extra carry on the split , but it only
+propagates 1 word on average , more cache friendly. sumdiff is not as effective
+as it could be (due the the x86 arch) , so separate evaluation maybe better?
+
+FFT_split_radix
+
+use mpn_sumdiff
+
+IFFT_radix2_truncate IFFT_radix2_new IFFT_radix2_truncate_twiddle
+IFFT_radix2_truncate1_twiddle
+
+use mpn_double
+
+IFFT_radix2_negacyclic
+
+has some loops which look ripe for asm code
+
+
+As soon as the sizes add up to > L1 D-cache then the current linear mpn code
+shows substantial slowdowns.
+
+Combining too many operations together may not be possible due to register
+shortage , have to look at each function on it's own.
+
+Prefetching on all current chips requires 64 bytes ie 8 words per loop , which
+is double the current usual of 4 words, so if the sizes are a multiple of 8
+this would eliminate the substantial winddown code.
 
