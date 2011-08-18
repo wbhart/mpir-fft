@@ -34,13 +34,6 @@ One may also force the pointwise multiplication *of the FFT negacyclic
 convolution* to be a multiple of 3 limbs, so that the identity 2^3B+1 =
 (2^B+1)(2^2B-2^B+1) can be used.
 
-revbin:
-
-5) This is very inefficient.
-
-6) The name should be changed to something more exotic to avoid
-polluting namespace when linking with other libraries.
-
 FFT_split* :
 
 7) We need a function which given the parameters currently sent to
