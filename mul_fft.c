@@ -545,7 +545,7 @@ void FFT_radix2_twiddle_butterfly(mp_limb_t * u, mp_limb_t * v,
 }
     
 /*
-   Set s = i1 + i2, t = z1*(i1 - i2) where z1 = exp(2*Pi*I/m) => w bits
+   Set s = i1 + i2, t = z1^i*(i1 - i2) where z1 = exp(2*Pi*I/m) => w bits
 */
 void FFT_radix2_butterfly(mp_limb_t * s, mp_limb_t * t, 
                   mp_limb_t * i1, mp_limb_t * i2, mp_size_t i, mp_size_t n, mp_bitcnt_t w)
@@ -573,6 +573,64 @@ void FFT_radix2_butterfly(mp_limb_t * s, mp_limb_t * t,
 }
 
 /*
+   Let w = 2k + 1, i = 2j + 1.
+   
+   Set s = i1 + i2, t = z1^i*(i1 - i2) where z1 = exp(2*Pi*I/m)
+
+   Here z1 corresponds to multiplication by (2^{3nw/4} - 2^{nw/4})*2^k.
+
+   We see z1^i corresponds to multiplication by
+   (2^{3nw/4} - 2^{nw/4})*2^{j+ik}.
+
+   We first multiply by 2^{j + wn/4 + ik}, then again by a further
+   2^{wn/2} and subtract.
+*/
+void FFT_radix2_butterfly_sqrt2(mp_limb_t * s, mp_limb_t * t, 
+  mp_limb_t * i1, mp_limb_t * i2, mp_size_t i, mp_size_t n, mp_bitcnt_t w, mp_limb_t * temp)
+{
+   mp_bitcnt_t wn = w*n;
+   mp_limb_t size = wn/GMP_LIMB_BITS, cy;
+   mp_size_t j = i/2, k = w/2;
+   mp_size_t y;
+   mp_bitcnt_t b1;
+   int negate = 0;
+
+   b1 = j + wn/4 + i*k;
+   while (b1 >= wn) 
+   {
+      negate = 1 - negate;
+      b1 -= wn;
+   }
+
+   y = b1/GMP_LIMB_BITS;
+   b1 -= y*GMP_LIMB_BITS;
+ 
+   /* sumdiff and multiply by 2^{j + wn/4 + i*k} */
+   mpn_lshB_sumdiffmod_2expp1(s, t, i1, i2, size, 0, y);
+   mpn_mul_2expmod_2expp1(t, t, size, b1);
+   if (negate) mpn_neg_n(t, t, size + 1);
+
+   /* multiply by 2^{wn/2} */
+   y = size/2;
+   
+   MPN_COPY(temp + y, t, size - y);
+   temp[size] = 0;
+   cy = mpn_neg_n(temp, t + size - y, y);
+   if ((mp_limb_signed_t) t[size] < 0)
+       mpn_add_1(temp + y, temp + y, size - y + 1, -t[size]);
+   else
+       mpn_sub_1(temp + y, temp + y, size - y + 1, t[size]);
+   mpn_sub_1(temp + y, temp + y, size - y + 1, cy); 
+   
+   /* shift by an additional half limb (rare) */
+   if (size & 1) 
+       mpn_mul_2expmod_2expp1(temp, temp, size, GMP_LIMB_BITS/2);
+
+   /* subtract */
+   mpn_sub_n(t, temp, t, size + 1);
+}
+
+/*
    Set s = i1 + z1*i2, t = i1 - z1*i2 where z1 = exp(-2*Pi*I/m) => w bits
 */
 void FFT_radix2_inverse_butterfly(mp_limb_t * s, mp_limb_t * t, 
@@ -588,6 +646,73 @@ void FFT_radix2_inverse_butterfly(mp_limb_t * s, mp_limb_t * t,
 
    mpn_div_2expmod_2expp1(i2, i2, limbs, b1);
    mpn_sumdiff_rshBmod_2expp1(s, t, i1, i2, limbs, 0, y);
+}
+
+/*
+   Let w = 2k + 1, i = 2j + 1.
+   
+   Set s = i1 + z1*i2, t = i1 - z1*i2 where z1 = exp(-2*Pi*I/m)
+
+   Here z1 corresponds to division by 2^k then division by 
+   (2^{3nw/4} - 2^{nw/4}).
+
+   We see z1^i corresponds to division by
+   (2^{3nw/4} - 2^{nw/4})*2^{j+ik} which is the same as division by
+   2^{j+ik + 1} then multiplication by (2^{3nw/4} - 2^{nw/4}).
+
+   Of course, division by 2^{j+ik + 1} is the same as multiplication by
+   2^{2*wn - j - ik - 1}. The exponent is positive as i <= 2*n, j < n, k < w/2.
+
+   We first multiply by 2^{2*wn - j - ik - 1 + wn/4} then multiply by an
+   additional 2^{nw/2} and subtract.
+
+*/
+void FFT_radix2_inverse_butterfly_sqrt2(mp_limb_t * s, mp_limb_t * t, 
+  mp_limb_t * i1, mp_limb_t * i2, mp_size_t i, mp_size_t n, mp_bitcnt_t w, mp_limb_t * temp)
+{
+   mp_bitcnt_t wn = w*n;
+   mp_limb_t size = wn/GMP_LIMB_BITS, cy;
+   mp_size_t j = i/2, k = w/2;
+   mp_size_t y2, y;
+   mp_size_t b1;
+   int negate = 0;
+
+   b1 = 2*wn - j - i*k - 1 + wn/4;
+   while (b1 >= wn) 
+   {
+      negate = 1 - negate;
+      b1 -= wn;
+   }
+
+   y2 = b1/GMP_LIMB_BITS;
+   b1 -= y2*GMP_LIMB_BITS;
+
+   /* multiply by small part of 2^{2*wn - j - ik - 1 + wn/4} */
+   if (b1) mpn_mul_2expmod_2expp1(i2, i2, size, b1);
+   
+   /* multiply by 2^{wn/2} */
+   y = size/2;
+    
+   MPN_COPY(temp + y, i2, size - y);
+   temp[size] = 0;
+   cy = mpn_neg_n(temp, i2 + size - y, y);
+   if ((mp_limb_signed_t) i2[size] < 0)
+       mpn_add_1(temp + y, temp + y, size - y + 1, -i2[size]);
+   else
+       mpn_sub_1(temp + y, temp + y, size - y + 1, i2[size]);
+   mpn_sub_1(temp + y, temp + y, size - y + 1, cy); 
+   
+   /* shift by an additional half limb (rare) */
+   if (size & 1) 
+      mpn_mul_2expmod_2expp1(temp, temp, size, GMP_LIMB_BITS/2);
+
+   /* subtract and negate... */
+   if (negate) mpn_sub_n(i2, temp, i2, size + 1);
+   else mpn_sub_n(i2, i2, temp, size + 1);
+
+   /* ...negate and shift **left** by y2 limbs (i.e. shift right by 
+   (size - y2) limbs) and sumdiff */
+   mpn_sumdiff_rshBmod_2expp1(s, t, i1, i2, size, 0, size - y2);
 }
 
 void FFT_radix2_twiddle_inverse_butterfly(mp_limb_t * s, mp_limb_t * t, 
@@ -696,6 +821,64 @@ void FFT_radix2(mp_limb_t ** rr, mp_size_t rs, mp_limb_t ** ii,
    
    // [r1, r3, ..., r{m-1}] = Fradix2[t0, t1, ..., t{m/2-1}]
    FFT_radix2(rr + n, 1, ii+n, n/2, 2*w, t1, t2, temp);
+}
+
+/* 
+   As for FFT_radix2 except that the length of the input and outputs is 2m = 4n and
+   it uses a 2m-th root of unity which is sqrt(2)^w where sqrt(2) is the Schoenhage
+   square root of 2 in Z/pZ.
+
+   As p = 2^nw + 1 the square root of 2 is 2^{3nw/4} - 2^{nw/4}. Assuming w = 2k + 1
+   the root of unity we are after is (2^{3nw/4} - 2^{nw/4})*2^k.
+
+   Of course if w = 2k then we can just use 2^k as our root of unity.
+*/
+void FFT_radix2_sqrt2(mp_limb_t ** rr, mp_size_t rs, mp_limb_t ** ii, 
+      mp_size_t n, mp_bitcnt_t w, mp_limb_t ** t1, mp_limb_t ** t2, mp_limb_t ** temp)
+{
+   mp_limb_t * ptr;
+   mp_size_t i;
+   
+   // [s0, s1, ..., s{m/2}] = [i0+i{m/2}, i1+i{m/2+1}, ..., i{m/2-1}+i{m-1}]
+   // [t0, t1, ..., t{m/2-1}] 
+   // = [z1^0*(i0-i{m/2}), z1^1*(i1-i{m/2+1}), ..., z1^{m/2-1}*(i{m/2-1}-i{m-1})]
+   // where z1 = exp(2*Pi*I/m), z1 => sqrt(2)^w 
+
+   if ((w & 1) == 0)
+   {
+      FFT_radix2(rr, rs, ii, 2*n, w/2, t1, t2, temp);
+
+      return;
+   }
+   
+   for (i = 0; i < 2*n; i++) 
+   {   
+      FFT_radix2_butterfly(*t1, *t2, ii[i], ii[2*n+i], i/2, n, w);
+   
+      ptr = ii[i];
+      ii[i] = *t1;
+      *t1 = ptr;
+      ptr = ii[2*n+i];
+      ii[2*n+i] = *t2;
+      *t2 = ptr;
+
+      i++;
+      
+      FFT_radix2_butterfly_sqrt2(*t1, *t2, ii[i], ii[2*n+i], i, n, w, *temp);
+
+      ptr = ii[i];
+      ii[i] = *t1;
+      *t1 = ptr;
+      ptr = ii[2*n+i];
+      ii[2*n+i] = *t2;
+      *t2 = ptr;
+   }
+
+   // [r0, r2, ..., r{m-2}] = Fradix2[s0, s1, ..., s{m/2-1}]
+   FFT_radix2(rr, 1, ii, n, w, t1, t2, temp);
+   
+   // [r1, r3, ..., r{m-1}] = Fradix2[t0, t1, ..., t{m/2-1}]
+   FFT_radix2(rr + 2*n, 1, ii+2*n, n, w, t1, t2, temp);
 }
 
 int FFT_negacyclic_twiddle(mp_limb_t * r, mp_limb_t * i1, mp_size_t i, mp_size_t n, mp_bitcnt_t w)
@@ -1088,6 +1271,61 @@ void FFT_radix2_twiddle(mp_limb_t ** ii, mp_size_t is,
    FFT_radix2_twiddle(ii+n*is, is, n/2, 2*w, t1, t2, temp, ws, r + rs, c, 2*rs);
 }
 
+/*
+   FFT of length 4*n on entries of ii with stride is.
+   Apply additional twists by z^{c*i} where i starts at r and increases by rs
+   for each coeff. Note z => ws bits.
+*/
+void FFT_radix2_twiddle_sqrt2(mp_limb_t ** ii, mp_size_t is,
+      mp_size_t n, mp_bitcnt_t w, mp_limb_t ** t1, mp_limb_t ** t2, mp_limb_t ** temp,
+      mp_size_t ws, mp_size_t r, mp_size_t c, mp_size_t rs)
+{
+   mp_limb_t ** ss, ** tt;
+   mp_limb_t * ptr;
+   mp_size_t i, j, k, l;
+   mp_size_t size = (w*n)/GMP_LIMB_BITS + 1;
+
+   if ((w & 1) == 0)
+   {
+      FFT_radix2_twiddle(ii, is, 2*n, w/2, t1, t2, temp, ws, r, c, rs);
+
+      return;
+   }
+   
+   // [s0, s1, ..., s{m/2}] = [i0+i{m/2}, i1+i{m/2+1}, ..., i{m/2-1}+i{m-1}]
+   // [t0, t1, ..., t{m/2-1}] 
+   // = [z1^0*(i0-i{m/2}), z1^1*(i1-i{m/2+1}), ..., z1^{m/2-1}*(i{m/2-1}-i{m-1})]
+   // where z1 = exp(2*Pi*I/m), z1^2 => w bits
+   for (i = 0; i < 2*n; i++) 
+   {   
+      FFT_radix2_butterfly(*t1, *t2, ii[i*is], ii[(2*n+i)*is], i/2, n, w);
+   
+      ptr = ii[i*is];
+      ii[i*is] = *t1;
+      *t1 = ptr;
+      ptr = ii[(2*n+i)*is];
+      ii[(2*n+i)*is] = *t2;
+      *t2 = ptr;
+
+      FFT_radix2_butterfly_sqrt2(*t1, *t2, ii[i*is], ii[(2*n+i)*is], i, n, w, *temp);
+   
+      i++;
+
+      ptr = ii[i*is];
+      ii[i*is] = *t1;
+      *t1 = ptr;
+      ptr = ii[(2*n+i)*is];
+      ii[(2*n+i)*is] = *t2;
+      *t2 = ptr;
+   }
+
+   // [r0, r2, ..., r{m-2}] = Fradix2[s0, s1, ..., s{m/2-1}]
+   FFT_radix2_twiddle(ii, is, n, w, t1, t2, temp, ws, r, c, 2*rs);
+   
+   // [r1, r3, ..., r{m-1}] = Fradix2[t0, t1, ..., t{m/2-1}]
+   FFT_radix2_twiddle(ii+2*n*is, is, n, w, t1, t2, temp, ws, r + rs, c, 2*rs);
+}
+
 void IFFT_radix2(mp_limb_t ** rr, mp_size_t rs, mp_limb_t ** ii, 
       mp_size_t n, mp_bitcnt_t w, mp_limb_t ** t1, mp_limb_t ** t2, mp_limb_t ** temp)
 {
@@ -1128,6 +1366,56 @@ void IFFT_radix2(mp_limb_t ** rr, mp_size_t rs, mp_limb_t ** ii,
       *t1 = ptr;
       ptr = rr[n+i];
       rr[n+i] = *t2;
+      *t2 = ptr;
+   }
+}
+
+void IFFT_radix2_sqrt2(mp_limb_t ** rr, mp_size_t rs, mp_limb_t ** ii, 
+      mp_size_t n, mp_bitcnt_t w, mp_limb_t ** t1, mp_limb_t ** t2, mp_limb_t ** temp)
+{
+   mp_limb_t ** ss, ** tt;
+   mp_limb_t * ptr;
+   mp_size_t i, j, k, l;
+   mp_size_t size = (w*n)/GMP_LIMB_BITS + 1;
+   
+   if ((w & 1) == 0)
+   {
+      IFFT_radix2(rr, rs, ii, 2*n, w/2, t1, t2, temp);
+
+      return;
+   }
+
+   // [s0, s1, ..., s{m/2-1}] = Fradix2_inverse[i0, i2, ..., i{m-2}]
+   IFFT_radix2(ii, 1, ii, n, w, t1, t2, temp);
+   
+   // [t{m/2}, t{m/2+1}, ..., t{m-1}] = Fradix2_inverse[i1, i3, ..., i{m-1}]
+   IFFT_radix2(ii+2*n, 1, ii+2*n, n, w, t1, t2, temp);
+
+   // [r0, r1, ..., r{m/2-1}] 
+   // = [s0+z1^0*t0, s1+z1^1*t1, ..., s{m/2-1}+z1^{m/2-1}*t{m-1}]
+   // [r{m/2}, t{m/2+1}, ..., r{m-1}] 
+   // = [s0-z1^0*t{m/2}, s1-z1^1*t{m/2+1}, ..., s{m/2-1}-z1^{m/2-1}*t{m-1}]
+   // where z1 = exp(-2*Pi*I/m), z1 => w bits
+   for (i = 0; i < 2*n; i++) 
+   {   
+      FFT_radix2_inverse_butterfly(*t1, *t2, ii[i], ii[2*n+i], i/2, n, w);
+   
+      ptr = rr[i];
+      rr[i] = *t1;
+      *t1 = ptr;
+      ptr = rr[2*n+i];
+      rr[2*n+i] = *t2;
+      *t2 = ptr;
+
+      i++;
+
+      FFT_radix2_inverse_butterfly_sqrt2(*t1, *t2, ii[i], ii[2*n+i], i, n, w, *temp);
+   
+      ptr = rr[i];
+      rr[i] = *t1;
+      *t1 = ptr;
+      ptr = rr[2*n+i];
+      rr[2*n+i] = *t2;
       *t2 = ptr;
    }
 }
@@ -1507,6 +1795,56 @@ void IFFT_radix2_twiddle(mp_limb_t ** ii, mp_size_t is,
    }
 }
 
+void IFFT_radix2_twiddle_sqrt2(mp_limb_t ** ii, mp_size_t is,
+      mp_size_t n, mp_bitcnt_t w, mp_limb_t ** t1, mp_limb_t ** t2, mp_limb_t ** temp,
+              mp_size_t ws, mp_size_t r, mp_size_t c, mp_size_t rs)
+{
+   mp_limb_t ** ss, ** tt;
+   mp_limb_t * ptr;
+   mp_size_t i, j, k, l;
+   mp_size_t size = (w*n)/GMP_LIMB_BITS + 1;
+   
+   if ((w & 1) == 0)
+   {
+      IFFT_radix2_twiddle(ii, is, 2*n, w/2, t1, t2, temp, ws, r, c, rs);
+      return;
+   }
+   
+   // [s0, s1, ..., s{m/2-1}] = Fradix2_inverse[i0, i2, ..., i{m-2}]
+   IFFT_radix2_twiddle(ii, is, n, w, t1, t2, temp, ws, r, c, 2*rs);
+   
+   // [t{m/2}, t{m/2+1}, ..., t{m-1}] = Fradix2_inverse[i1, i3, ..., i{m-1}]
+   IFFT_radix2_twiddle(ii+2*n*is, is, n, w, t1, t2, temp, ws, r + rs, c, 2*rs);
+
+   // [r0, r1, ..., r{m/2-1}] 
+   // = [s0+z1^0*t0, s1+z1^1*t1, ..., s{m/2-1}+z1^{m/2-1}*t{m-1}]
+   // [r{m/2}, t{m/2+1}, ..., r{m-1}] 
+   // = [s0-z1^0*t{m/2}, s1-z1^1*t{m/2+1}, ..., s{m/2-1}-z1^{m/2-1}*t{m-1}]
+   // where z1 = exp(-2*Pi*I/m), z1 => w bits
+   for (i = 0; i < 2*n; i++) 
+   {   
+      FFT_radix2_inverse_butterfly(*t1, *t2, ii[i*is], ii[(2*n+i)*is], i/2, n, w);
+   
+      ptr = ii[i*is];
+      ii[i*is] = *t1;
+      *t1 = ptr;
+      ptr = ii[(2*n+i)*is];
+      ii[(2*n+i)*is] = *t2;
+      *t2 = ptr;
+
+      i++;
+
+      FFT_radix2_inverse_butterfly_sqrt2(*t1, *t2, ii[i*is], ii[(2*n+i)*is], i, n, w, *temp);
+   
+      ptr = ii[i*is];
+      ii[i*is] = *t1;
+      *t1 = ptr;
+      ptr = ii[(2*n+i)*is];
+      ii[(2*n+i)*is] = *t2;
+      *t2 = ptr;
+   }
+}
+
 /*
    The matrix Fourier algorithm for a 1D Fourier transform of length m = 2*n,
    works as follows:
@@ -1549,6 +1887,64 @@ void FFT_radix2_mfa(mp_limb_t ** ii, mp_size_t n, mp_bitcnt_t w,
    }
 
    for (i = 0; i < n2; i++)
+   {
+      FFT_radix2(ii + i*n1, 1, ii + i*n1, n1/2, w*n2, t1, t2, temp);
+      
+      for (j = 0; j < n1; j++)
+      {
+         mp_size_t s = mpir_revbin(j, depth2);
+         if (j < s)
+         {
+            ptr = ii[i*n1 + j];
+            ii[i*n1 + j] = ii[i*n1 + s];
+            ii[i*n1 + s] = ptr;
+         }
+      }
+   }
+}
+
+/*
+   The matrix Fourier algorithm for a 1D Fourier transform of length m = 4*n,
+   works as follows:
+
+   * Split the coefficients into R rows of C columns (here C = n1, R = m/n1 = 2*n2)
+   * Perform a length R FFT on each column, i.e. with an input stride of n1
+   * Multiply each coefficient by z^{r*c} where z = exp(2*Pi*I/m), note z=>w bits
+   * Perform a length C FFT on each row, i.e. with an input stride of 1
+*/
+void FFT_radix2_mfa_sqrt2(mp_limb_t ** ii, mp_size_t n, mp_bitcnt_t w, 
+                    mp_limb_t ** t1, mp_limb_t ** t2, mp_limb_t ** temp, mp_size_t n1)
+{
+   mp_size_t i, j;
+   mp_size_t n2 = (2*n)/n1;
+   mp_bitcnt_t depth = 0;
+   mp_bitcnt_t depth2 = 0;
+   mp_limb_t * ptr;
+
+   while ((1UL<<depth) < n2/2) depth++;
+   while ((1UL<<depth2) < n1/2) depth2++;
+   
+   // n2 rows, n1 cols
+
+   for (i = 0; i < n1; i++)
+   {   
+      // FFT of length 2*n2 on column i, applying z^{r*i} for rows going up in steps 
+      // of 1 starting at row 0, where z => w bits
+      
+      FFT_radix2_twiddle_sqrt2(ii + i, n1, n2/2, w*n1, t1, t2, temp, w, 0, i, 1);
+      for (j = 0; j < 2*n2; j++)
+      {
+         mp_size_t s = mpir_revbin(j, depth + 1);
+         if (j < s)
+         {
+            ptr = ii[i + j*n1];
+            ii[i + j*n1] = ii[i + s*n1];
+            ii[i + s*n1] = ptr;
+         }
+      }
+   }
+
+   for (i = 0; i < 2*n2; i++)
    {
       FFT_radix2(ii + i*n1, 1, ii + i*n1, n1/2, w*n2, t1, t2, temp);
       
@@ -1665,6 +2061,56 @@ void IFFT_radix2_mfa(mp_limb_t ** ii, mp_size_t n, mp_bitcnt_t w,
       // IFFT of length n2 on column i, applying z^{r*i} for rows going up in steps 
       // of 1 starting at row 0, where z => w bits
       IFFT_radix2_twiddle(ii + i, n1, n2/2, w*n1, t1, t2, temp, w, 0, i, 1);
+   }
+
+}
+
+void IFFT_radix2_mfa_sqrt2(mp_limb_t ** ii, mp_size_t n, mp_bitcnt_t w, 
+                    mp_limb_t ** t1, mp_limb_t ** t2, mp_limb_t ** temp, mp_size_t n1)
+{
+   mp_size_t i, j;
+   mp_size_t n2 = (2*n)/n1;
+   mp_bitcnt_t depth = 0;
+   mp_bitcnt_t depth2 = 0;
+   mp_limb_t * ptr;
+
+   while ((1UL<<depth) < n2/2) depth++;
+   while ((1UL<<depth2) < n1/2) depth2++;
+
+   // n2 rows, n1 cols
+
+   for (i = 0; i < 2*n2; i++)
+   {
+      for (j = 0; j < n1; j++)
+      {
+         mp_size_t s = mpir_revbin(j, depth2);
+         if (j < s)
+         {
+            ptr = ii[i*n1 + j];
+            ii[i*n1 + j] = ii[i*n1 + s];
+            ii[i*n1 + s] = ptr;
+         }
+      }      
+      
+      IFFT_radix2(ii + i*n1, 1, ii + i*n1, n1/2, w*n2, t1, t2, temp);
+   }
+
+   for (i = 0; i < n1; i++)
+   {   
+      for (j = 0; j < 2*n2; j++)
+      {
+         mp_size_t s = mpir_revbin(j, depth + 1);
+         if (j < s)
+         {
+            ptr = ii[i + j*n1];
+            ii[i + j*n1] = ii[i + s*n1];
+            ii[i + s*n1] = ptr;
+         }
+      }
+      
+      // IFFT of length 2*n2 on column i, applying z^{r*i} for rows going up in steps 
+      // of 1 starting at row 0, where z => w bits
+      IFFT_radix2_twiddle_sqrt2(ii + i, n1, n2/2, w*n1, t1, t2, temp, w, 0, i, 1);
    }
 
 }
@@ -1905,10 +2351,9 @@ mp_limb_t new_mpn_mulmod_2expp1(mp_limb_t * r, mp_limb_t * i1, mp_limb_t * i2,
    (where w2 should be 2), the value of w2 should probably always just be 1.
 */
 void new_mpn_mul(mp_limb_t * r1, mp_limb_t * i1, mp_size_t n1, mp_limb_t * i2, mp_size_t n2,
-                 mp_bitcnt_t depth, mp_bitcnt_t w2)
+                 mp_bitcnt_t depth, mp_bitcnt_t w)
 {
    mp_size_t n = (1UL<<depth);
-   mp_bitcnt_t w = w2*w2;
    mp_bitcnt_t bits1 = (n*w - depth)/2; 
    mp_size_t sqrt = (1UL<<(depth/2));
 
@@ -1979,6 +2424,147 @@ void new_mpn_mul(mp_limb_t * r1, mp_limb_t * i1, mp_size_t n1, mp_limb_t * i2, m
    MPN_ZERO(r1, r_limbs);
    FFT_combine_bits(r1, ii, j1 + j2 - 1, bits1, limbs, r_limbs);
       
+   TMP_FREE;
+}
+
+void new_mpn_mul2(mp_limb_t * r1, mp_limb_t * i1, mp_size_t n1, mp_limb_t * i2, mp_size_t n2,
+                 mp_bitcnt_t depth, mp_bitcnt_t w)
+{
+   mp_size_t n = (1UL<<depth);
+   mp_bitcnt_t bits1 = (n*w - (depth+1))/2; 
+   
+   mp_size_t r_limbs = n1 + n2;
+   mp_size_t j1 = (n1*GMP_LIMB_BITS - 1)/bits1 + 1;
+   mp_size_t j2 = (n2*GMP_LIMB_BITS - 1)/bits1 + 1;
+   mp_size_t limbs = (n*w)/GMP_LIMB_BITS;
+   
+   mp_size_t size = limbs + 1;
+   mp_size_t i, j, s, t, u;
+
+   mp_limb_t * ptr;
+   mp_limb_t ** ii, ** jj, *tt, *t1, *t2, *u1, *u2, *s1, *s2;
+   mp_limb_t c;
+   
+   TMP_DECL;
+
+   TMP_MARK;
+
+   ii = (mp_limb_t **) TMP_BALLOC_LIMBS(4*(n + n*size) + 3*size);
+   for (i = 0, ptr = (mp_limb_t *) ii + 4*n; i < 4*n; i++, ptr += size) 
+   {
+      ii[i] = ptr;
+   }
+   t1 = ptr;
+   t2 = t1 + size;
+   s1 = t2 + size;
+   
+   jj = (mp_limb_t **) TMP_BALLOC_LIMBS(4*(n + n*size) + 3*size);
+   for (i = 0, ptr = (mp_limb_t *) jj + 4*n; i < 4*n; i++, ptr += size) 
+   {
+      jj[i] = ptr;
+   }
+   u1 = ptr;
+   u2 = u1 + size;
+   s2 = u2 + size;
+   
+   tt = (mp_limb_t *) TMP_BALLOC_LIMBS(2*size);
+   
+   j1 = FFT_split_bits(ii, i1, n1, bits1, limbs);
+   for (j = j1 ; j < 4*n; j++)
+      MPN_ZERO(ii[j], limbs + 1);
+   FFT_radix2_sqrt2(ii, 1, ii, n, w, &t1, &t2, &s1);
+    
+   j2 = FFT_split_bits(jj, i2, n2, bits1, limbs);
+   for (j = j2 ; j < 4*n; j++)
+      MPN_ZERO(jj[j], limbs + 1);
+   FFT_radix2_sqrt2(jj, 1, jj, n, w, &u1, &u2, &s2);      
+
+   for (j = 0; j < 4*n; j++)
+   {
+      mpn_normmod_2expp1(ii[j], limbs);
+      mpn_normmod_2expp1(jj[j], limbs);
+      c = ii[j][limbs] + 2*jj[j][limbs];
+      ii[j][limbs] = new_mpn_mulmod_2expp1(ii[j], ii[j], jj[j], c, n*w, tt);
+   }
+
+   IFFT_radix2_sqrt2(ii, 1, ii, n, w, &t1, &t2, &s2);
+   for (j = 0; j < 4*n; j++)
+   {
+      mpn_div_2expmod_2expp1(ii[j], ii[j], limbs, depth + 2);
+      mpn_normmod_2expp1(ii[j], limbs);
+   }
+   MPN_ZERO(r1, r_limbs);
+   FFT_combine_bits(r1, ii, j1 + j2 - 1, bits1, limbs, r_limbs);
+     
+   TMP_FREE;
+}
+
+void new_mpn_mul3(mp_limb_t * r1, mp_limb_t * i1, mp_size_t n1, mp_limb_t * i2, mp_size_t n2,
+                 mp_bitcnt_t depth, mp_bitcnt_t w, mp_size_t sqrt)
+{
+   mp_size_t n = (1UL<<depth);
+   mp_bitcnt_t bits1 = (n*w - (depth+1))/2; 
+   
+   mp_size_t r_limbs = n1 + n2;
+   mp_size_t j1 = (n1*GMP_LIMB_BITS - 1)/bits1 + 1;
+   mp_size_t j2 = (n2*GMP_LIMB_BITS - 1)/bits1 + 1;
+   mp_size_t limbs = (n*w)/GMP_LIMB_BITS;
+   
+   mp_size_t size = limbs + 1;
+   mp_size_t i, j, s, t, u;
+
+   mp_limb_t * ptr;
+   mp_limb_t ** ii, ** jj, *tt, *t1, *t2, *s1;
+   mp_limb_t c;
+   
+   TMP_DECL;
+
+   TMP_MARK;
+
+   ii = (mp_limb_t **) TMP_BALLOC_LIMBS(4*(n + n*size) + 3*size);
+   for (i = 0, ptr = (mp_limb_t *) ii + 4*n; i < 4*n; i++, ptr += size) 
+   {
+      ii[i] = ptr;
+   }
+   t1 = ptr;
+   t2 = t1 + size;
+   s1 = t2 + size;
+   
+   jj = (mp_limb_t **) TMP_BALLOC_LIMBS(4*(n + n*size));
+   for (i = 0, ptr = (mp_limb_t *) jj + 4*n; i < 4*n; i++, ptr += size) 
+   {
+      jj[i] = ptr;
+   }
+   
+   tt = (mp_limb_t *) TMP_BALLOC_LIMBS(2*size);
+   
+   j1 = FFT_split_bits(ii, i1, n1, bits1, limbs);
+   for (j = j1 ; j < 4*n; j++)
+      MPN_ZERO(ii[j], limbs + 1);
+   FFT_radix2_mfa_sqrt2(ii, n, w, &t1, &t2, &s1, sqrt);
+    
+   j2 = FFT_split_bits(jj, i2, n2, bits1, limbs);
+   for (j = j2 ; j < 4*n; j++)
+      MPN_ZERO(jj[j], limbs + 1);
+   FFT_radix2_mfa_sqrt2(jj, n, w, &t1, &t2, &s1, sqrt);      
+
+   for (j = 0; j < 4*n; j++)
+   {
+      mpn_normmod_2expp1(ii[j], limbs);
+      mpn_normmod_2expp1(jj[j], limbs);
+      c = ii[j][limbs] + 2*jj[j][limbs];
+      ii[j][limbs] = new_mpn_mulmod_2expp1(ii[j], ii[j], jj[j], c, n*w, tt);
+   }
+
+   IFFT_radix2_mfa_sqrt2(ii, n, w, &t1, &t2, &s1, sqrt);
+   for (j = 0; j < 4*n; j++)
+   {
+      mpn_div_2expmod_2expp1(ii[j], ii[j], limbs, depth + 2);
+      mpn_normmod_2expp1(ii[j], limbs);
+   }
+   MPN_ZERO(r1, r_limbs);
+   FFT_combine_bits(r1, ii, j1 + j2 - 1, bits1, limbs, r_limbs);
+     
    TMP_FREE;
 }
 
@@ -2498,62 +3084,13 @@ void test_sumdiff_rshBmod()
    gmp_randclear(state);
 }
 
-void test_mul()
-{
-   mp_bitcnt_t depth = 13UL;
-   mp_bitcnt_t w2 = 3UL;
-   mp_size_t iters = 1;
-
-   mp_size_t n = (1UL<<depth);
-   mp_bitcnt_t w = w2*w2;
-   mp_bitcnt_t bits1 = (n*w - depth)/2; 
-   mp_bitcnt_t bits = n*bits1;
-   mp_size_t int_limbs = (bits - 1UL)/GMP_LIMB_BITS + 1;
-   
-   mp_size_t i, j;
-   mp_limb_t *i1, *i2, *r1, *r2;
-   gmp_randstate_t state;
-   gmp_randinit_default(state);
-
-   TMP_DECL;
-
-   TMP_MARK;
-
-   i1 = TMP_BALLOC_LIMBS(6*int_limbs);
-   i2 = i1 + int_limbs;
-   r1 = i2 + int_limbs;
-   r2 = r1 + 2*int_limbs;
-   
-   for (i = 0; i < iters; i++)
-   {
-      mpn_urandomb(i1, state, bits);
-      mpn_urandomb(i2, state, bits);
-  
-      mpn_mul_n(r2, i1, i2, int_limbs);
-      new_mpn_mul(r1, i1, int_limbs, i2, int_limbs, depth, w2);
-      
-      for (j = 0; j < 2*int_limbs; j++)
-      {
-         if (r1[j] != r2[j]) 
-         {
-            printf("error in limb %ld, %lx != %lx\n", j, r1[j], r2[j]);
-            abort();
-         } 
-      }
-   }
-      
-   TMP_FREE;
-   gmp_randclear(state);
-}
-
 void time_mul_with_negacyclic()
 {
    mp_bitcnt_t depth = 17UL;
-   mp_bitcnt_t w2 = 1UL;
+   mp_bitcnt_t w = 1UL;
    mp_size_t iters = 1;
 
    mp_size_t n = (1UL<<depth);
-   mp_bitcnt_t w = w2*w2;
    mp_bitcnt_t bits1 = (n*w - depth)/2; 
    mp_bitcnt_t bits = n*bits1;
    mp_size_t int_limbs = (bits - 1UL)/GMP_LIMB_BITS + 1;
@@ -2576,7 +3113,7 @@ void time_mul_with_negacyclic()
   
    for (i = 0; i < iters; i++)
    {
-      new_mpn_mul(r1, i1, int_limbs, i2, int_limbs, depth, w2);
+      new_mpn_mul(r1, i1, int_limbs, i2, int_limbs, depth, w);
    }
       
    TMP_FREE;
@@ -2647,7 +3184,7 @@ void test_fft_ifft()
    mp_size_t size = limbs + 1;
    mp_size_t i, j, s;
    mp_limb_t * ptr;
-   mp_limb_t ** ii, ** jj, ** kk, *tt, *t1, *t2, *u1, *u2, *v1, *v2, **s1, **s2, **s3;
+   mp_limb_t ** ii, ** jj, ** kk, *tt, *t1, *t2, *u1, *u2, *s1, *s2;
    mp_limb_t c;
    gmp_randstate_t state;
    gmp_randinit_default(state);
@@ -2656,7 +3193,7 @@ void test_fft_ifft()
 
    TMP_MARK;
 
-   ii = (mp_limb_t **) TMP_BALLOC_LIMBS(2*(n + n*size) + 2*n + 2*size);
+   ii = (mp_limb_t **) TMP_BALLOC_LIMBS(2*(n + n*size) + 3*size);
    for (i = 0, ptr = (mp_limb_t *) ii + 2*n; i < 2*n; i++, ptr += size) 
    {
       ii[i] = ptr;
@@ -2664,58 +3201,104 @@ void test_fft_ifft()
    }
    t1 = ptr;
    t2 = t1 + size;
-   s1 = (mp_limb_t **) t2 + size;
+   s1 = t2 + size;
 
    for (j = 0; j < 2*n; j++)
       mpn_normmod_2expp1(ii[j], limbs);
 
-   
-   jj = (mp_limb_t **) TMP_BALLOC_LIMBS(2*(n + n*size) + 2*n + 2*size);
+   jj = (mp_limb_t **) TMP_BALLOC_LIMBS(2*(n + n*size));
    for (i = 0, ptr = (mp_limb_t *) jj + 2*n; i < 2*n; i++, ptr += size) 
    {
       jj[i] = ptr;
       MPN_COPY(jj[i], ii[i], limbs + 1);
    }
-   u1 = ptr;
-   u2 = u1 + size;
-   s2 = (mp_limb_t **) u2 + size;
-   
-   kk = (mp_limb_t **) TMP_BALLOC_LIMBS(2*(n + n*size) + 2*n + 2*size);
-   for (i = 0, ptr = (mp_limb_t *) kk + 2*n; i < 2*n; i++, ptr += size) 
-   {
-      kk[i] = ptr;
-   }
-   v1 = ptr;
-   v2 = v1 + size;
-   s3 = (mp_limb_t **) v2 + size;
    
    tt = (mp_limb_t *) TMP_BALLOC_LIMBS(2*size);
    
    for (i = 0; i < 1; i++)
    {
-      FFT_radix2(ii, 1, ii, n, w, &t1, &t2, s1);
+      FFT_radix2(ii, 1, ii, n, w, &t1, &t2, &s1);
+      
+      IFFT_radix2(ii, 1, ii, n, w, &t1, &t2, &s1);
       for (j = 0; j < 2*n; j++)
+      {
+         mpn_div_2expmod_2expp1(ii[j], ii[j], limbs, depth + 1);
          mpn_normmod_2expp1(ii[j], limbs);
-      for (j = 0; j < 2*n; j++)
-      {
-         s = mpir_revbin(j, depth);
-         MPN_COPY(kk[j], ii[j], limbs + 1);
-      }
-      IFFT_radix2(kk, 1, kk, n, w, &v1, &v2, s3);
-      for (j = 0; j < 2*n; j++)
-      {
-         mpn_mul_2expmod_2expp1(jj[j], jj[j], limbs, depth + 1);
-         mpn_normmod_2expp1(jj[j], limbs);
-         mpn_normmod_2expp1(kk[j], limbs);
       }
 
       for (j = 0; j < 2*n; j++)
       {
-         if (mpn_cmp(kk[j], jj[j], limbs + 1) != 0)
+         if (mpn_cmp(ii[j], jj[j], limbs + 1) != 0)
          {
             printf("Error in entry %ld\n", j);
             abort();
          }
+      }
+   }
+      
+   TMP_FREE;
+   gmp_randclear(state);
+}
+
+void test_fft_ifft_sqrt2()
+{
+   mp_bitcnt_t depth = 6UL;
+   mp_size_t n = (1UL<<depth);
+   mp_bitcnt_t w = 1;
+   mp_size_t limbs = (n*w)/GMP_LIMB_BITS;
+   mp_size_t size = limbs + 1;
+   mp_size_t i, j, s;
+   mp_limb_t * ptr;
+   mp_limb_t ** ii, ** jj, *t1, *t2, *s1;
+   mp_limb_t c;
+   gmp_randstate_t state;
+   gmp_randinit_default(state);
+
+   TMP_DECL;
+
+   TMP_MARK;
+
+   ii = (mp_limb_t **) TMP_BALLOC_LIMBS(4*(n + n*size) + 3*size);
+   for (i = 0, ptr = (mp_limb_t *) ii + 4*n; i < 4*n; i++, ptr += size) 
+   {
+      ii[i] = ptr;
+      rand_n(ii[i], state, limbs);
+   }
+   t1 = ptr;
+   t2 = t1 + size;
+   s1 = t2 + size;
+
+   for (j = 0; j < 4*n; j++)
+      mpn_normmod_2expp1(ii[j], limbs);
+  
+   jj = (mp_limb_t **) TMP_BALLOC_LIMBS(4*(n + n*size));
+   for (i = 0, ptr = (mp_limb_t *) jj + 4*n; i < 4*n; i++, ptr += size) 
+   {
+      jj[i] = ptr;
+      MPN_COPY(jj[i], ii[i], size);
+   }
+   
+   FFT_radix2_sqrt2(ii, 1, ii, n, w, &t1, &t2, &s1);
+   
+   for (j = 0; j < 4*n; j++)
+      mpn_normmod_2expp1(ii[j], limbs);
+
+   IFFT_radix2_sqrt2(ii, 1, ii, n, w, &t1, &t2, &s1);
+   
+   for (j = 0; j < 4*n; j++)
+   {
+      mpn_mul_2expmod_2expp1(jj[j], jj[j], limbs, depth + 2);
+      mpn_normmod_2expp1(jj[j], limbs);
+      mpn_normmod_2expp1(ii[j], limbs);
+   }
+
+   for (j = 0; j < 4*n; j++)
+   {
+      if (mpn_cmp(ii[j], jj[j], size) != 0)
+      {
+         printf("Error in entry %ld\n", j);
+         gmp_printf("%Nx != \n%Nx\n", ii[j], size, jj[j], size);
+         abort();
       }
    }
       
@@ -2893,6 +3476,85 @@ void test_fft_ifft_mfa()
       }
 
       for (j = 0; j < 2*n; j++)
+      {
+         if (mpn_cmp(kk[j], jj[j], limbs + 1) != 0)
+         {
+            gmp_printf("Error in entry %ld, %Nx != %Nx\n", j, kk[j], limbs + 1, jj[j], limbs + 1);
+            abort();
+         }
+      }
+   }
+      
+   TMP_FREE;
+   gmp_randclear(state);
+}
+
+void test_fft_ifft_mfa_sqrt2()
+{
+   mp_bitcnt_t depth = 13UL;
+   mp_size_t n = (1UL<<depth);
+   mp_bitcnt_t w = 4;
+   mp_size_t sqrt = (1UL<<(depth/2));
+   mp_size_t limbs = (n*w)/GMP_LIMB_BITS;
+   mp_size_t size = limbs + 1;
+   mp_size_t i, j, s;
+   mp_limb_t * ptr;
+   mp_limb_t ** ii, ** jj, ** kk, *tt, *t1, *t2, *s1;
+   mp_limb_t c;
+   gmp_randstate_t state;
+   gmp_randinit_default(state);
+
+   TMP_DECL;
+
+   TMP_MARK;
+
+   ii = (mp_limb_t **) TMP_BALLOC_LIMBS(4*(n + n*size) + 3*size);
+   for (i = 0, ptr = (mp_limb_t *) ii + 4*n; i < 4*n; i++, ptr += size) 
+   {
+      ii[i] = ptr;
+      rand_n(ii[i], state, limbs);
+   }
+   t1 = ptr;
+   t2 = t1 + size;
+   s1 = t2 + size;
+   
+   for (j = 0; j < 4*n; j++)
+      mpn_normmod_2expp1(ii[j], limbs);
+
+   jj = (mp_limb_t **) TMP_BALLOC_LIMBS(4*(n + n*size));
+   for (i = 0, ptr = (mp_limb_t *) jj + 4*n; i < 4*n; i++, ptr += size) 
+   {
+      jj[i] = ptr;
+      MPN_COPY(jj[i], ii[i], limbs + 1);
+   }
+   
+   kk = (mp_limb_t **) TMP_BALLOC_LIMBS(4*(n + n*size));
+   for (i = 0, ptr = (mp_limb_t *) kk + 4*n; i < 4*n; i++, ptr += size) 
+   {
+      kk[i] = ptr;
+   }
+   
+   tt = (mp_limb_t *) TMP_BALLOC_LIMBS(2*size);
+   
+   for (i = 0; i < 1; i++)
+   {
+      FFT_radix2_mfa_sqrt2(ii, n, w, &t1, &t2, &s1, sqrt);
+
+      for (j = 0; j < 4*n; j++)
+         mpn_normmod_2expp1(ii[j], limbs);
+      
+      for (j = 0; j < 4*n; j++)
+         MPN_COPY(kk[j], ii[j], limbs + 1);
+
+      IFFT_radix2_mfa_sqrt2(kk, n, w, &t1, &t2, &s1, sqrt);
+      for (j = 0; j < 4*n; j++)
+      {
+         mpn_mul_2expmod_2expp1(jj[j], jj[j], limbs, depth + 2);
+         mpn_normmod_2expp1(jj[j], limbs);
+         mpn_normmod_2expp1(kk[j], limbs);
+      }
+
+      for (j = 0; j < 4*n; j++)
       {
          if (mpn_cmp(kk[j], jj[j], limbs + 1) != 0)
          {
@@ -3268,12 +3930,11 @@ void time_imfa()
 
 void time_mul()
 {
-   mp_bitcnt_t depth = 13UL;
-   mp_bitcnt_t w2 = 1UL;
+   mp_bitcnt_t depth = 10UL;
+   mp_bitcnt_t w = 3UL;
    mp_size_t iters = 100;
 
    mp_size_t n = (1UL<<depth);
-   mp_size_t w = w2*w2;
    mp_bitcnt_t bits1 = (n*w - depth)/2; 
    mp_bitcnt_t bits = (8364032*8)/8; //n*bits1;
    printf("bits = %ld\n", bits);
@@ -3298,7 +3959,95 @@ void time_mul()
   
    for (i = 0; i < iters; i++)
    {
-      new_mpn_mul(r1, i1, int_limbs, i2, int_limbs, depth, w2);
+      new_mpn_mul(r1, i1, int_limbs, i2, int_limbs, depth, w);
+   }
+      
+   TMP_FREE;
+   gmp_randclear(state);
+}
+
+void time_mul2()
+{
+   mp_bitcnt_t depth = 16UL;
+   mp_bitcnt_t w = 1UL;
+   mp_size_t iters = 1;
+
+   mp_size_t n = (1UL<<depth);
+   mp_size_t sqrt = (1UL<<(depth/2));
+   mp_bitcnt_t bits1 = (n*w - (depth + 1))/2; 
+   mp_bitcnt_t bits = 2*n*bits1;
+   printf("bits = %ld\n", bits);
+   mp_size_t int_limbs = bits/GMP_LIMB_BITS;
+   
+   mp_size_t i, j;
+   mp_limb_t *i1, *i2, *r1, *r2;
+   gmp_randstate_t state;
+   gmp_randinit_default(state);
+
+   TMP_DECL;
+
+   TMP_MARK;
+
+   i1 = TMP_BALLOC_LIMBS(6*int_limbs);
+   i2 = i1 + int_limbs;
+   r1 = i2 + int_limbs;
+   r2 = r1 + 2*int_limbs;
+   
+   mpn_urandomb(i1, state, bits);
+   mpn_urandomb(i2, state, bits);
+  
+   for (i = 0; i < iters; i++)
+   {
+      //new_mpn_mul3(r1, i1, int_limbs, i2, int_limbs, depth, w, sqrt);
+      mpn_mul(r1, i1, int_limbs, i2, int_limbs);
+   }
+      
+   TMP_FREE;
+   gmp_randclear(state);
+}
+
+void test_mul()
+{
+   mp_bitcnt_t depth = 13UL;
+   mp_bitcnt_t w = 4UL;
+   mp_size_t iters = 1;
+
+   mp_size_t n = (1UL<<depth);
+   mp_size_t sqrt = (1UL<<(depth/2));
+   mp_bitcnt_t bits1 = (n*w - (depth + 1))/2; 
+   mp_bitcnt_t bits = 2*n*bits1;
+   mp_size_t int_limbs = bits/GMP_LIMB_BITS;
+   
+   mp_size_t i, j;
+   mp_limb_t *i1, *i2, *r1, *r2;
+   gmp_randstate_t state;
+   gmp_randinit_default(state);
+
+   TMP_DECL;
+
+   TMP_MARK;
+
+   i1 = TMP_BALLOC_LIMBS(6*int_limbs);
+   i2 = i1 + int_limbs;
+   r1 = i2 + int_limbs;
+   r2 = r1 + 2*int_limbs;
+   
+   for (i = 0; i < iters; i++)
+   {
+      mpn_urandomb(i1, state, bits);
+      mpn_urandomb(i2, state, bits);
+  
+      mpn_mul_n(r2, i1, i2, int_limbs);
+      new_mpn_mul3(r1, i1, int_limbs, i2, int_limbs, depth, w, sqrt);
+      
+      for (j = 0; j < 2*int_limbs; j++)
+      {
+         if (r1[j] != r2[j]) 
+         {
+            printf("error in limb %ld, %lx != %lx\n", j, r1[j], r2[j]);
+            abort();
+         } 
+      }
    }
       
    TMP_FREE;
@@ -3308,6 +4057,10 @@ void time_mul()
 int main(void)
 {
 #if TEST
+   test_mul(); printf("MUL...PASS\n");
+   test_fft_ifft_mfa_sqrt2(); printf("FFT_IFFT_MFA_SQRT2...PASS\n");
+   
+   test_fft_ifft_sqrt2(); printf("FFT_IFFT_SQRT...PASS\n");
    test_norm(); printf("mpn_normmod_2expp1...PASS\n");
    test_mul_2expmod(); printf("mpn_mul_2expmod_2expp1...PASS\n");
    test_div_2expmod(); printf("mpn_div_2expmod_2expp1...PASS\n");
@@ -3320,9 +4073,7 @@ int main(void)
    test_fft_ifft_mfa(); printf("FFT_IFFT_MFA...PASS\n");
    test_fft_truncate(); printf("FFT_TRUNCATE...PASS\n");
    test_fft_ifft_truncate(); printf("FFT_IFFT_TRUNCATE...PASS\n");
-
    //test_mulmod();
-   //test_mul();
 #endif
 
 #if TIME
@@ -3331,7 +4082,7 @@ int main(void)
    //time_imfa();
    //time_mul_with_negacyclic(); // negacyclic is currently *disabled*
    //time_negacyclic_fft();
-   time_mul();
+   time_mul2();
 #endif
 
    return 0;
