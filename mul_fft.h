@@ -40,6 +40,7 @@ or implied, of William Hart.
    Add the signed limb c to the value r which is an integer 
    modulo 2^GMP_LIMB_BITS*l + 1. We assume that the generic case
    is that c is very small and allow the compiler to inline that.
+   No reduction is performed.
 */
 static inline
 void mpn_addmod_2expp1_1(mp_limb_t * r, mp_size_t l, mp_limb_signed_t c)
